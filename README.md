@@ -14,13 +14,20 @@ scripts/init_local_config.sh <node路径> <node_modules路径>
 随后运行 scripts/save_tiktok_credentials_to_keychain.sh，把我提供的 App ID、App Secret、Advertiser ID 只写入 macOS Keychain。最后运行 scripts/run_creative_report.sh，打开终端显示的本机 OAuth 链接完成授权。确认 output/TikTok_创意明细.xlsx 已生成，并报告日期范围、行数、未能获取的只读字段权限和验证结果；不要上传本机配置、输出文件、Token 或 Secret。
 ```
 
-首次使用需要由拥有广告账号权限的 TikTok for Business 用户在浏览器完成 OAuth。每次手动导出会重新授权；本项目不在文件或 Git 中持久化 Access Token。
+首次使用需要由拥有广告账号权限的 TikTok for Business 用户在浏览器完成 OAuth。成功交换得到的 Marketing API 长期 Access Token 会写入当前 macOS 用户的 Keychain；后续手动或定时导出直接复用，不再每次打开浏览器。只有 Token 被撤销、失效或账号授权关系变化时才需要重新授权。
+
+如需主动替换已保存的 Token，运行 `TIKTOK_FORCE_OAUTH=1 ./scripts/run_creative_report.sh`，再完成一次浏览器授权。日常运行不会把 App Secret 注入报表构建子进程。
 
 ## 本机配置与凭据边界
 
 运行 `scripts/init_local_config.sh` 后，会生成未提交的 `TikTok_创意明细配置.local.md`。它只保存本机 artifact-tool 运行时路径和输出文件位置，且被 `.gitignore` 排除。
 
-App ID、App Secret、Advertiser ID 由 `scripts/save_tiktok_credentials_to_keychain.sh` 写入当前 macOS 用户的 Keychain。配置 Markdown、输出目录、Node 运行时软链接和 SDK 本地副本都不会上传到 GitHub。
+App ID、App Secret、Advertiser ID 和长期 Access Token 均保存在当前 macOS 用户的 Keychain。配置 Markdown、输出目录、Node 运行时软链接和 SDK 本地副本都不会上传到 GitHub。
+
+如需补齐 API 当前不再返回的历史作品元数据，可在本机配置中填写 `TIKTOK_METADATA_SOURCE_XLSX`，指向已有的 23 列创意明细工作簿，或 TikTok Ads Manager 导出的 Creative Data 工作簿。构建器会按作品 ID 合并历史元数据，并继续复用上一份成功工作簿中已有的商品、授权与计划信息；本机源文件不会提交到 GitHub。
+
+若目标 XLSX 已存在，构建器只重建其中的 `11_creative_daily_report`（或兼容旧版的 `创意明细`）Sheet，其他 Sheet 原样保留；整个临时工作簿通过检查后才原子替换正式文件。
+刷新前请关闭目标 XLSX；检测到 Excel 的同目录锁文件时，任务会停止并保留上一份成功文件。
 
 ## 产出字段
 
@@ -50,7 +57,7 @@ App ID、App Secret、Advertiser ID 由 `scripts/save_tiktok_credentials_to_keyc
 22. 广告视频播放达 75% 播放率
 23. 广告视频完播率
 
-嵌套 JSON 会拆成独立字段。若当前 TikTok 应用未获商品读取权限，`商品名称` 保持空白，但其余可读取字段仍会生成。
+嵌套 JSON 会拆成独立字段。App ID/Secret 只标识应用，Access Token 只代表一次已授予的账号授权；具体接口仍受开发者应用已审批权限与广告账号/店铺资源关系约束。若当前应用未获“Get products within a TikTok Shop”读取权限，`商品名称` 无法由该 Token 自动补齐，但其余可读取字段仍会生成。
 
 ## 开发与验证
 

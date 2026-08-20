@@ -11,7 +11,7 @@ if [[ -z "$app_id" || -z "$app_secret" || -z "$advertiser_id" ]]; then
   exit 64
 fi
 
-/usr/bin/security add-generic-password -U -s com.codex.tiktok-workflow.app-id -a default -w "$app_id" >/dev/null
-/usr/bin/security add-generic-password -U -s com.codex.tiktok-workflow.app-secret -a default -w "$app_secret" >/dev/null
-/usr/bin/security add-generic-password -U -s com.codex.tiktok-workflow.advertiser-id -a default -w "$advertiser_id" >/dev/null
+/usr/bin/security add-generic-password -U -s com.codex.tiktok-workflow.app-id -a default -w <<< "$app_id" >/dev/null 2>&1
+/usr/bin/security add-generic-password -U -s com.codex.tiktok-workflow.app-secret -a default -w <<< "$app_secret" >/dev/null 2>&1
+/usr/bin/security add-generic-password -U -s com.codex.tiktok-workflow.advertiser-id -a default -w <<< "$advertiser_id" >/dev/null 2>&1
 print "已将 TikTok 凭据写入当前 macOS 用户的 Keychain。"

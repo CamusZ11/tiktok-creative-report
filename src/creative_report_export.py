@@ -180,6 +180,54 @@ def _fetch_pages(
     return rows
 
 
+def _fetch_store_products(
+    client: TikTokReadOnlyClient,
+    advertiser_id: str,
+    store_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch every product page, tolerating only the documented permission gap."""
+
+    endpoint = "/open_api/v1.3/store/product/get/"
+    params = {
+        "advertiser_id": advertiser_id,
+        "store_id": store_id,
+        "page": 1,
+        "page_size": 100,
+    }
+    first = client.get(endpoint, params)
+    if _response_code(first) == 40001:
+        return []
+    _require_success(first, endpoint)
+    rows = _extract_rows(first)
+    for page in range(2, _page_count(first) + 1):
+        params["page"] = page
+        rows.extend(_extract_rows(_require_success(client.get(endpoint, params), endpoint)))
+    return rows
+
+
+def _report_filters(
+    campaigns: Iterable[Mapping[str, Any]],
+    campaign_details: Iterable[Mapping[str, Any]],
+) -> dict[str, list[str]]:
+    """Build complete filters without silently dropping IDs above API limits."""
+
+    campaign_ids = _unique(
+        _first_value(campaign, ("campaign_id", "id")) for campaign in campaigns
+    )
+    item_group_ids = _unique(
+        item_group_id
+        for detail in campaign_details
+        for item_group_id in _item_group_ids(detail)
+    )
+    if not campaign_ids or not item_group_ids:
+        raise TikTokApiError("TikTok API returned no product GMV Max campaign or product ID")
+    if len(campaign_ids) > 100:
+        raise TikTokApiError("TikTok report exceeds the safe 100 campaign filter limit")
+    if len(item_group_ids) > 100:
+        raise TikTokApiError("TikTok report exceeds the safe 100 product filter limit")
+    return {"campaign_ids": campaign_ids, "item_group_ids": item_group_ids}
+
+
 def _store_contexts(stores: Iterable[Mapping[str, Any]]) -> list[tuple[str, str]]:
     contexts = []
     for store in stores:
@@ -188,6 +236,24 @@ def _store_contexts(stores: Iterable[Mapping[str, Any]]) -> list[tuple[str, str]
         if store_id and bc_id:
             contexts.append((store_id, bc_id))
     return contexts
+
+
+def _identity_filters(identities: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
+    filters: list[dict[str, str]] = []
+    for identity in identities:
+        if identity.get("product_gmv_max_available") is False:
+            continue
+        identity_id = _first_value(identity, ("identity_id",))
+        identity_type = _first_value(identity, ("identity_type",))
+        if not identity_id or not identity_type or identity_type == "AUTH_CODE":
+            continue
+        value = {"identity_id": identity_id, "identity_type": identity_type}
+        for key in ("identity_authorized_bc_id", "identity_authorized_shop_id", "store_id"):
+            field_value = _first_value(identity, (key,))
+            if field_value:
+                value[key] = field_value
+        filters.append(value)
+    return filters
 
 
 def download_creative_report(
@@ -234,48 +300,34 @@ def download_creative_report(
 
     products: list[dict[str, Any]] = []
     for store_id in store_ids:
-        response = client.get(
-            "/open_api/v1.3/store/product/get/",
-            {"advertiser_id": advertiser_id, "store_id": store_id, "page": 1, "page_size": 100},
-        )
-        if _response_code(response) == 0:
-            products.extend(_extract_rows(response))
+        products.extend(_fetch_store_products(client, advertiser_id, store_id))
 
     identities: list[dict[str, Any]] = []
     videos: list[dict[str, Any]] = []
     for store_id, bc_id in _store_contexts(stores):
-        identities.extend(
-            _fetch_pages(
-                client,
-                "/open_api/v1.3/gmv_max/identity/get/",
-                {"advertiser_id": advertiser_id, "store_id": store_id, "store_authorized_bc_id": bc_id, "page_size": 100},
-            )
+        store_identities = _fetch_pages(
+            client,
+            "/open_api/v1.3/gmv_max/identity/get/",
+            {"advertiser_id": advertiser_id, "store_id": store_id, "store_authorized_bc_id": bc_id, "page_size": 100},
         )
-        videos.extend(
-            _fetch_pages(
+        identities.extend(store_identities)
+        filters = _identity_filters(store_identities)
+        batches = [filters[index : index + 20] for index in range(0, len(filters), 20)] or [[]]
+        for index, identity_batch in enumerate(batches):
+            params: dict[str, Any] = {
+                "advertiser_id": advertiser_id,
+                "store_id": store_id,
+                "store_authorized_bc_id": bc_id,
+                "need_auth_code_video": index == 0,
+                "page_size": 50,
+            }
+            if identity_batch:
+                params["identity_list"] = identity_batch
+            videos.extend(_fetch_pages(
                 client,
                 "/open_api/v1.3/gmv_max/video/get/",
-                {
-                    "advertiser_id": advertiser_id,
-                    "store_id": store_id,
-                    "store_authorized_bc_id": bc_id,
-                    "need_auth_code_video": True,
-                    "page_size": 50,
-                },
-            )
-        )
-
-    campaign_ids = [_first_value(campaign, ("campaign_id", "id")) for campaign in campaigns]
-    campaign_ids = [campaign_id for campaign_id in campaign_ids if campaign_id][:100]
-    item_group_ids = list(
-        dict.fromkeys(
-            item_group_id
-            for detail in campaign_details
-            for item_group_id in _item_group_ids(detail)
-        )
-    )[:100]
-    if not campaign_ids or not item_group_ids:
-        raise TikTokApiError("TikTok API returned no product GMV Max campaign or product ID")
+                params,
+            ))
 
     creative_rows = _fetch_pages(
         client,
@@ -287,8 +339,7 @@ def download_creative_report(
             "end_date": end_date,
             "metrics": list(CREATIVE_REPORT_METRICS),
             "dimensions": ["item_id"],
-            "gmv_max_promotion_types": ["PRODUCT"],
-            "filtering": {"campaign_ids": campaign_ids, "item_group_ids": item_group_ids},
+            "filtering": _report_filters(campaigns, campaign_details),
             "enable_total_metrics": True,
             "page_size": 1000,
         },
@@ -388,10 +439,42 @@ def _first_value(row: Mapping[str, Any], keys: Iterable[str]) -> str:
 
 
 def _item_group_ids(row: Mapping[str, Any]) -> list[str]:
-    values = row.get("item_group_ids") or row.get("item_group_id") or []
+    values = (
+        row.get("item_group_ids")
+        or row.get("spu_id_list")
+        or row.get("item_group_id")
+        or row.get("spu_id")
+        or []
+    )
     if not isinstance(values, list):
         values = [values]
     return [str(value) for value in values if value not in (None, "")]
+
+
+def _detail_videos(campaign_details: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    videos: list[dict[str, Any]] = []
+    for detail in campaign_details:
+        for key in ("item_list", "custom_anchor_video_list"):
+            value = detail.get(key)
+            if isinstance(value, list):
+                videos.extend(dict(item) for item in value if isinstance(item, Mapping))
+    return videos
+
+
+def _unique(values: Iterable[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _append_association(mapping: dict[str, list[str]], key: str, value: str) -> None:
+    if not key or not value:
+        return
+    values = mapping.setdefault(key, [])
+    if value not in values:
+        values.append(value)
+
+
+def _joined(values: Iterable[str]) -> str:
+    return " | ".join(_unique(values))
 
 
 def build_creative_rows(
@@ -404,9 +487,10 @@ def build_creative_rows(
 ) -> list[dict[str, Any]]:
     """Join read-only endpoint results into the fixed creative-report columns."""
 
+    reference_videos = [*_detail_videos(campaign_details), *videos]
     video_by_item = {
         _first_value(video, ("item_id", "id")): video
-        for video in videos
+        for video in reference_videos
         if _first_value(video, ("item_id", "id"))
     }
     product_name_by_id = {
@@ -423,33 +507,58 @@ def build_creative_rows(
         for campaign in campaigns
         if _first_value(campaign, ("campaign_id", "id"))
     }
-    campaign_by_product_id: dict[str, str] = {}
+    campaign_by_product_id: dict[str, list[str]] = {}
+    campaign_by_item_id: dict[str, list[str]] = {}
+    product_by_item_id: dict[str, list[str]] = {}
     for detail in campaign_details:
         campaign_id = _first_value(detail, ("campaign_id", "id"))
         for item_group_id in _item_group_ids(detail):
-            campaign_by_product_id.setdefault(item_group_id, campaign_id)
+            _append_association(campaign_by_product_id, item_group_id, campaign_id)
+        for video in _detail_videos([detail]):
+            item_id = _first_value(video, ("item_id", "id"))
+            item_group_ids = _item_group_ids(video)
+            _append_association(campaign_by_item_id, item_id, campaign_id)
+            for item_group_id in item_group_ids:
+                _append_association(product_by_item_id, item_id, item_group_id)
 
     result: list[dict[str, Any]] = []
     for creative in creative_rows:
         dimensions = _mapping(creative.get("dimensions"))
         metrics = _mapping(creative.get("metrics"))
         item_id = _first_value(dimensions, ("item_id", "id"))
-        item_group_id = _first_value(dimensions, ("item_group_id", "spu_id", "product_id"))
         video = _mapping(video_by_item.get(item_id))
         identity = _mapping(video.get("identity_info"))
         video_info = _mapping(video.get("video_info"))
-        campaign_id = campaign_by_product_id.get(item_group_id, "")
+        item_group_ids = _unique(
+            [
+                *_item_group_ids(dimensions),
+                *_item_group_ids(video),
+                *product_by_item_id.get(item_id, []),
+            ]
+        )
+        campaign_ids = _unique(
+            [
+                _first_value(dimensions, ("campaign_id",)),
+                *campaign_by_item_id.get(item_id, []),
+                *(
+                    campaign_id
+                    for item_group_id in item_group_ids
+                    for campaign_id in campaign_by_product_id.get(item_group_id, [])
+                ),
+            ]
+        )
 
         row = {
             "创意素材": _first_value(video, ("text", "title", "name")),
             "作品 ID": _first_value(video_info, ("video_id", "item_id")) or item_id,
-            "商品名称": product_name_by_id.get(item_group_id, ""),
-            "商品 ID": item_group_id,
+            "商品名称": _joined(product_name_by_id.get(item_group_id, "") for item_group_id in item_group_ids),
+            "商品 ID": _joined(item_group_ids),
             "TikTok 账号": _first_value(identity, ("display_name", "user_name")),
             "授权类型": _first_value(identity, ("identity_type",)),
             "探索状态": _text(metrics.get("creative_delivery_status")),
-            "发布时间": _first_value(video_info, ("create_time", "publish_time")),
-            "广告计划名称": campaign_name_by_id.get(campaign_id, ""),
+            "发布时间": _first_value(video, ("post_time", "create_time", "publish_time"))
+            or _first_value(video_info, ("create_time", "publish_time")),
+            "广告计划名称": _joined(campaign_name_by_id.get(campaign_id, "") for campaign_id in campaign_ids),
             "成本": metrics.get("cost", ""),
             "SKU 订单数": metrics.get("orders", ""),
             "平均下单成本": metrics.get("cost_per_order", ""),

@@ -26,6 +26,7 @@ umask 077
   print "TIKTOK_ARTIFACT_NODE=$NODE_PATH"
   print "TIKTOK_ARTIFACT_NODE_MODULES=$NODE_MODULES_PATH"
   print 'TIKTOK_OUTPUT_FILE=output/TikTok_创意明细.xlsx'
+  print 'TIKTOK_METADATA_SOURCE_XLSX='
   print '```'
 } > "$CONFIG_FILE"
 
