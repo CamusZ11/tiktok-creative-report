@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import time
 from zoneinfo import ZoneInfo
 
 
@@ -80,6 +82,8 @@ class TikTokReadOnlyClient:
     access_token: str
     opener: Any = urlopen
     base_url: str = BASE_URL
+    max_network_attempts: int = 3
+    retry_delay_seconds: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.access_token:
@@ -105,8 +109,15 @@ class TikTokReadOnlyClient:
             headers={"Access-Token": self.access_token, "Accept": "application/json"},
             method="GET",
         )
-        with self.opener(request, timeout=30) as response:
-            body = response.read()
+        for attempt in range(1, self.max_network_attempts + 1):
+            try:
+                with self.opener(request, timeout=30) as response:
+                    body = response.read()
+                break
+            except URLError as error:
+                if attempt == self.max_network_attempts:
+                    raise TikTokApiError(f"TikTok API network failure for {endpoint}") from error
+                time.sleep(self.retry_delay_seconds)
         try:
             payload = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:

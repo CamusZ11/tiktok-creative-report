@@ -13,6 +13,10 @@ class StartOAuthExportTests(unittest.TestCase):
             safe_failure_detail(RuntimeError("TikTok API request failed for /open_api/v1.3/gmv_max/report/get/")),
             "TikTok API request failed for /open_api/v1.3/gmv_max/report/get/",
         )
+        self.assertEqual(
+            safe_failure_detail(RuntimeError("TikTok API network failure for /open_api/v1.3/gmv_max/store/list/")),
+            "TikTok API network failure for /open_api/v1.3/gmv_max/store/list/",
+        )
         self.assertEqual(safe_failure_detail(ValueError("secret-like detail")), "ValueError")
 
     def test_resolve_date_range_defaults_to_last_seven_complete_days(self):

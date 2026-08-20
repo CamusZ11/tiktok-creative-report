@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
 
 from creative_report_export import (
@@ -123,6 +124,28 @@ class CreativeReportExportTests(unittest.TestCase):
         self.assertNotIn("token-123", json.dumps(payload))
         self.assertIn("/open_api/v1.3/store/product/get/", requests)
         self.assertIn("/open_api/v1.3/gmv_max/report/get/", requests)
+
+    def test_client_retries_transient_network_errors_without_exposing_request_credentials(self):
+        calls = 0
+
+        def opener(request, timeout):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise URLError("temporary network failure")
+            return FakeResponse({"code": 0, "data": {"store_list": []}})
+
+        response = TikTokReadOnlyClient(
+            "token-123",
+            opener=opener,
+            retry_delay_seconds=0,
+        ).get(
+            "/open_api/v1.3/gmv_max/store/list/",
+            {"advertiser_id": "advertiser-1"},
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(response["code"], 0)
 
     def test_build_creative_rows_maps_report_and_reference_fields(self):
         rows = build_creative_rows(

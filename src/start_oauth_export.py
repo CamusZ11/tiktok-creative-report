@@ -67,7 +67,9 @@ def safe_failure_detail(error: Exception) -> str:
     """Expose only endpoint-level errors that cannot contain credentials or identifiers."""
 
     message = str(error)
-    if message.startswith("TikTok API request failed for /open_api/"):
+    if message.startswith("TikTok API request failed for /open_api/") or message.startswith(
+        "TikTok API network failure for /open_api/"
+    ):
         return message
     return type(error).__name__
 
