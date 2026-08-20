@@ -88,6 +88,7 @@ class CreativeReportExportTests(unittest.TestCase):
 
     def test_download_creative_report_is_get_only_and_tolerates_product_permission_gap(self):
         requests = []
+        report_dates = []
 
         def opener(request, timeout):
             self.assertEqual(request.get_method(), "GET")
@@ -126,12 +127,38 @@ class CreativeReportExportTests(unittest.TestCase):
                 return FakeResponse({"code": 0, "data": {"item_list": [{"item_id": "post-1", "text": "creative caption", "identity_info": {"display_name": "Into Beauty", "identity_type": "AUTH_CODE"}, "video_info": {"video_id": "video-1"}}], "page_info": {"total_page": 1}}})
             if endpoint.endswith("/gmv_max/report/get/"):
                 self.assertEqual(query["dimensions"], ['["item_id"]'])
+                report_dates.append((query["start_date"][0], query["end_date"][0]))
                 filtering = json.loads(query["filtering"][0])
                 self.assertEqual(
                     filtering,
                     {"campaign_ids": ["campaign-1"], "item_group_ids": ["sku-1"]},
                 )
-                return FakeResponse({"code": 0, "data": {"list": [{"dimensions": {"item_id": "post-1", "item_group_id": "sku-1"}, "metrics": {"cost": 12.5, "orders": 2}}], "page_info": {"total_page": 1}}})
+                if query["start_date"] == ["2026-08-14"]:
+                    return FakeResponse({"code": 0, "data": {"list": [
+                        {
+                            "dimensions": {"item_id": "post-1", "item_group_id": "sku-1"},
+                            "metrics": {
+                                "creative_delivery_status": "DELIVERING",
+                                "cost": 12.5,
+                                "orders": 2,
+                                "gross_revenue": 50,
+                                "product_impressions": 100,
+                                "product_clicks": 5,
+                            },
+                        },
+                        {
+                            "dimensions": {"item_id": "post-1", "item_group_id": "sku-1"},
+                            "metrics": {
+                                "creative_delivery_status": "IN_QUEUE",
+                                "cost": 7.5,
+                                "orders": 1,
+                                "gross_revenue": 20,
+                                "product_impressions": 10,
+                                "product_clicks": 3,
+                            },
+                        },
+                    ], "page_info": {"total_page": 1}}})
+                return FakeResponse({"code": 0, "data": {"list": [], "page_info": {"total_page": 1}}})
             self.fail(f"unexpected endpoint: {endpoint}")
 
         payload = download_creative_report(
@@ -142,6 +169,31 @@ class CreativeReportExportTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["headers"], list(CREATIVE_HEADERS))
+        self.assertIn("日期", payload["headers"])
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["日期"], "2026-08-14")
+        self.assertEqual(payload["rows"][0]["作品 ID"], "video-1")
+        self.assertEqual(payload["rows"][0]["探索状态"], "DELIVERING")
+        self.assertEqual(payload["rows"][0]["成本"], 20.0)
+        self.assertEqual(payload["rows"][0]["SKU 订单数"], 3.0)
+        self.assertEqual(payload["rows"][0]["总收入"], 70.0)
+        self.assertEqual(payload["rows"][0]["商品广告曝光数"], 110.0)
+        self.assertEqual(payload["rows"][0]["商品广告点击数"], 8.0)
+        self.assertAlmostEqual(payload["rows"][0]["平均下单成本"], 20 / 3)
+        self.assertAlmostEqual(payload["rows"][0]["商品广告点击率"], 8 / 110)
+        self.assertAlmostEqual(payload["rows"][0]["广告转化率"], 3 / 8)
+        self.assertEqual(
+            report_dates,
+            [
+                ("2026-08-14", "2026-08-14"),
+                ("2026-08-15", "2026-08-15"),
+                ("2026-08-16", "2026-08-16"),
+                ("2026-08-17", "2026-08-17"),
+                ("2026-08-18", "2026-08-18"),
+                ("2026-08-19", "2026-08-19"),
+                ("2026-08-20", "2026-08-20"),
+            ],
+        )
         self.assertEqual(payload["rows"][0]["商品名称"], "")
         self.assertEqual(payload["rows"][0]["广告计划名称"], "GMV Max Plan")
         self.assertNotIn("token-123", json.dumps(payload))

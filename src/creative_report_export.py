@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 
 CREATIVE_HEADERS = (
+    "日期",
     "创意素材",
     "作品 ID",
     "商品名称",
@@ -34,6 +35,22 @@ CREATIVE_HEADERS = (
     "商品广告点击数",
     "商品广告点击率",
     "广告转化率",
+    "广告视频播放达 2 秒播放率",
+    "广告视频播放达 6 秒播放率",
+    "广告视频播放达 25% 播放率",
+    "广告视频播放达 50% 播放率",
+    "广告视频播放达 75% 播放率",
+    "广告视频完播率",
+)
+
+ADDITIVE_CREATIVE_HEADERS = (
+    "成本",
+    "SKU 订单数",
+    "总收入",
+    "商品广告曝光数",
+    "商品广告点击数",
+)
+VIDEO_RATE_HEADERS = (
     "广告视频播放达 2 秒播放率",
     "广告视频播放达 6 秒播放率",
     "广告视频播放达 25% 播放率",
@@ -329,34 +346,42 @@ def download_creative_report(
                 params,
             ))
 
-    creative_rows = _fetch_pages(
-        client,
-        "/open_api/v1.3/gmv_max/report/get/",
-        {
-            "advertiser_id": advertiser_id,
-            "store_ids": store_ids,
-            "start_date": start_date,
-            "end_date": end_date,
-            "metrics": list(CREATIVE_REPORT_METRICS),
-            "dimensions": ["item_id"],
-            "filtering": _report_filters(campaigns, campaign_details),
-            "enable_total_metrics": True,
-            "page_size": 1000,
-        },
-    )
+    creative_rows: list[dict[str, Any]] = []
+    for report_date in _inclusive_dates(start_date, end_date):
+        daily_rows = _fetch_pages(
+            client,
+            "/open_api/v1.3/gmv_max/report/get/",
+            {
+                "advertiser_id": advertiser_id,
+                "store_ids": store_ids,
+                "start_date": report_date,
+                "end_date": report_date,
+                "metrics": list(CREATIVE_REPORT_METRICS),
+                "dimensions": ["item_id"],
+                "filtering": _report_filters(campaigns, campaign_details),
+                "enable_total_metrics": True,
+                "page_size": 1000,
+            },
+        )
+        creative_rows.extend(
+            build_creative_rows(
+                creative_rows=daily_rows,
+                videos=videos,
+                campaigns=campaigns,
+                campaign_details=campaign_details,
+                products=products,
+                report_date=report_date,
+            )
+        )
+    daily_creative_rows = aggregate_daily_creative_rows(creative_rows)
     return {
         "headers": list(CREATIVE_HEADERS),
-        "rows": build_creative_rows(
-            creative_rows=creative_rows,
-            videos=videos,
-            campaigns=campaigns,
-            campaign_details=campaign_details,
-            products=products,
-        ),
+        "rows": daily_creative_rows,
         "metadata": {
             "start_date": start_date,
             "end_date": end_date,
-            "creative_row_count": len(creative_rows),
+            "creative_row_count": len(daily_creative_rows),
+            "raw_creative_row_count": len(creative_rows),
             "product_name_available": bool(products),
             "identity_count": len(identities),
         },
@@ -376,6 +401,71 @@ def _percentage_as_ratio(value: Any) -> Any:
         return float(value) / 100
     except (TypeError, ValueError):
         return value
+
+
+def _inclusive_dates(start_date: str, end_date: str) -> list[str]:
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    if end < start:
+        raise ValueError("end_date must not be before start_date")
+    return [
+        (start + timedelta(days=offset)).isoformat()
+        for offset in range((end - start).days + 1)
+    ]
+
+
+def _number(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _weighted_rate(rows: Iterable[Mapping[str, Any]], header: str) -> Any:
+    weighted_total = 0.0
+    total_weight = 0.0
+    for row in rows:
+        value = row.get(header)
+        weight = _number(row.get("商品广告曝光数"))
+        if value in (None, "") or weight <= 0:
+            continue
+        weighted_total += _number(value) * weight
+        total_weight += weight
+    return weighted_total / total_weight if total_weight else ""
+
+
+def aggregate_daily_creative_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return one row for each date and work ID from TikTok's duplicate report rows."""
+
+    groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in rows:
+        report_date = _text(row.get("日期"))
+        work_id = _text(row.get("作品 ID"))
+        if not report_date or not work_id:
+            continue
+        groups.setdefault((report_date, work_id), []).append(row)
+
+    aggregated: list[dict[str, Any]] = []
+    for (report_date, work_id), group_rows in groups.items():
+        primary_row = max(
+            group_rows,
+            key=lambda row: (_number(row.get("商品广告曝光数")), _number(row.get("成本"))),
+        )
+        row = dict(primary_row)
+        row["日期"] = report_date
+        row["作品 ID"] = work_id
+        for header in ADDITIVE_CREATIVE_HEADERS:
+            row[header] = sum(_number(item.get(header)) for item in group_rows)
+        orders = _number(row["SKU 订单数"])
+        clicks = _number(row["商品广告点击数"])
+        impressions = _number(row["商品广告曝光数"])
+        row["平均下单成本"] = row["成本"] / orders if orders else ""
+        row["商品广告点击率"] = clicks / impressions if impressions else ""
+        row["广告转化率"] = orders / clicks if clicks else ""
+        for header in VIDEO_RATE_HEADERS:
+            row[header] = _weighted_rate(group_rows, header)
+        aggregated.append({header: row.get(header, "") for header in CREATIVE_HEADERS})
+    return sorted(aggregated, key=lambda row: (str(row["日期"]), str(row["作品 ID"])))
 
 
 def complete_natural_date_range(reference_date: str | date | None = None) -> tuple[str, str]:
@@ -484,6 +574,7 @@ def build_creative_rows(
     campaigns: Iterable[Mapping[str, Any]],
     campaign_details: Iterable[Mapping[str, Any]],
     products: Iterable[Mapping[str, Any]],
+    report_date: str = "",
 ) -> list[dict[str, Any]]:
     """Join read-only endpoint results into the fixed creative-report columns."""
 
@@ -549,6 +640,7 @@ def build_creative_rows(
         )
 
         row = {
+            "日期": report_date,
             "创意素材": _first_value(video, ("text", "title", "name")),
             "作品 ID": _first_value(video_info, ("video_id", "item_id")) or item_id,
             "商品名称": _joined(product_name_by_id.get(item_group_id, "") for item_group_id in item_group_ids),

@@ -14,11 +14,19 @@ if (!inputPath || !outputPath) {
 }
 
 const payload = JSON.parse(await fs.readFile(inputPath, "utf8"));
-if (!Array.isArray(payload.headers) || payload.headers.length !== 23 || !Array.isArray(payload.rows)) {
+if (!Array.isArray(payload.headers) || payload.headers.length !== 24 || !Array.isArray(payload.rows)) {
   throw new Error("Invalid creative report payload");
 }
 
-const metadataHeaders = payload.headers.slice(0, 9);
+const metadataHeaders = [
+  "创意素材",
+  "商品名称",
+  "商品 ID",
+  "TikTok 账号",
+  "授权类型",
+  "发布时间",
+  "广告计划名称",
+];
 const metadataByPostId = new Map();
 
 async function workbookRows(workbookPath, preferredSheetNames) {
@@ -103,6 +111,7 @@ const enrichedRows = payload.rows.map((row) => {
 
 const textIdentifierHeaders = new Set(["作品 ID", "商品 ID"]);
 const outputValue = (header, value) => {
+  if (header === "日期" && value) return new Date(`${String(value)}T12:00:00Z`);
   if (textIdentifierHeaders.has(header)) return "";
   return value ?? "";
 };
@@ -127,46 +136,59 @@ if (existingWorkbookPath) {
 const existingSheet = ["11_creative_daily_report", "创意明细"]
   .map((name) => workbook.worksheets.items.find((candidate) => candidate.name === name))
   .find(Boolean);
-const sheet = existingSheet ?? workbook.worksheets.add("11_creative_daily_report");
-if (existingSheet) sheet.reset();
+const canReuseTargetSheet = existingSheet && workbook.worksheets.items.length > 1;
+if (existingSheet && !canReuseTargetSheet) {
+  workbook = Workbook.create();
+}
+const sheet = canReuseTargetSheet
+  ? existingSheet
+  : workbook.worksheets.add(existingSheet?.name ?? "11_creative_daily_report");
+if (canReuseTargetSheet) sheet.reset();
 sheet.showGridLines = false;
-sheet.getRange("A:I").format.numberFormat = "@";
+sheet.getRange("B:J").format.numberFormat = "@";
 sheet.getRangeByIndexes(0, 0, matrix.length, payload.headers.length).values = matrix;
 if (enrichedRows.length) {
-  sheet.getRangeByIndexes(1, 1, enrichedRows.length, 1).formulas = enrichedRows.map((row) => [
+  sheet.getRangeByIndexes(1, 2, enrichedRows.length, 1).formulas = enrichedRows.map((row) => [
     identifierFormula(row?.["作品 ID"]),
   ]);
-  sheet.getRangeByIndexes(1, 3, enrichedRows.length, 1).formulas = enrichedRows.map((row) => [
+  sheet.getRangeByIndexes(1, 4, enrichedRows.length, 1).formulas = enrichedRows.map((row) => [
     identifierFormula(row?.["商品 ID"]),
   ]);
 }
-sheet.getRange("A1:W1").format = {
+sheet.getRange("A1:X1").format = {
   fill: "#0F766E",
   font: { bold: true, color: "#FFFFFF" },
   horizontalAlignment: "center",
   verticalAlignment: "center",
   wrapText: true,
 };
-sheet.getRange("A:W").format.verticalAlignment = "center";
-sheet.getRange("J:J").format.numberFormat = "#,##0.00";
-sheet.getRange("K:K").format.numberFormat = "#,##0";
-sheet.getRange("L:M").format.numberFormat = "#,##0.00";
-sheet.getRange("N:O").format.numberFormat = "#,##0";
-sheet.getRange("P:W").format.numberFormat = "0.00%";
-sheet.getRange(`A1:W${matrix.length}`).format.borders = {
+sheet.getRange("A:X").format.verticalAlignment = "center";
+sheet.getRange("A:A").format.numberFormat = "yyyy-mm-dd";
+sheet.getRange("K:K").format.numberFormat = "#,##0.00";
+sheet.getRange("L:L").format.numberFormat = "#,##0";
+sheet.getRange("M:N").format.numberFormat = "#,##0.00";
+sheet.getRange("O:P").format.numberFormat = "#,##0";
+sheet.getRange("Q:X").format.numberFormat = "0.00%";
+sheet.getRange(`A1:X${matrix.length}`).format.borders = {
   preset: "insideHorizontal",
   style: "thin",
   color: "#E5E7EB",
 };
-sheet.getRange("A:A").format.columnWidth = 30;
-sheet.getRange("B:B").format.columnWidth = 20;
-sheet.getRange("C:C").format.columnWidth = 28;
-sheet.getRange("D:D").format.columnWidth = 20;
-sheet.getRange("E:I").format.columnWidth = 18;
-sheet.getRange("J:W").format.columnWidth = 15;
-sheet.getRange("A1:W1").format.rowHeight = 34;
+sheet.getRange("A:A").format.columnWidth = 13;
+sheet.getRange("B:B").format.columnWidth = 30;
+sheet.getRange("C:C").format.columnWidth = 20;
+sheet.getRange("D:D").format.columnWidth = 28;
+sheet.getRange("E:E").format.columnWidth = 20;
+sheet.getRange("F:J").format.columnWidth = 18;
+sheet.getRange("K:X").format.columnWidth = 15;
+sheet.getRange("A1:X1").format.rowHeight = 34;
 sheet.freezePanes.freezeRows(1);
-sheet.tables.add(`A1:W${matrix.length}`, true, "CreativeDetails");
+sheet.tables.add(`A1:X${matrix.length}`, true, "CreativeDetails");
+if (enrichedRows.length) {
+  sheet.getRange(`A2:A${matrix.length}`).format.numberFormat = "yyyy-mm-dd";
+  sheet.getRange(`C2:C${matrix.length}`).format.numberFormat = "@";
+  sheet.getRange(`E2:E${matrix.length}`).format.numberFormat = "@";
+}
 
 const errors = await workbook.inspect({
   kind: "match",
