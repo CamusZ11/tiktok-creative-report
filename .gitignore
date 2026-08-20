@@ -1,0 +1,18 @@
+# Local configuration and credentials
+TikTok_创意明细配置.local.md
+.env
+.env.*
+
+# Generated reports and temporary data
+output/
+.tiktok-temp/
+*.inspect.ndjson
+
+# Local runtime and caches
+node_modules
+__pycache__/
+*.py[cod]
+
+# Large local API SDK references (download locally only when Codex needs them)
+tiktok-business-api-sdk/
+nodejs_sdk/
