@@ -103,6 +103,7 @@ class CreativeReportExportTests(unittest.TestCase):
             if endpoint.endswith("/gmv_max/identity/get/"):
                 return FakeResponse({"code": 0, "data": {"identity_list": []}})
             if endpoint.endswith("/gmv_max/video/get/"):
+                self.assertEqual(query["page_size"], ["50"])
                 return FakeResponse({"code": 0, "data": {"item_list": [{"item_id": "post-1", "text": "creative caption", "identity_info": {"display_name": "Into Beauty", "identity_type": "AUTH_CODE"}, "video_info": {"video_id": "video-1"}}], "page_info": {"total_page": 1}}})
             if endpoint.endswith("/gmv_max/report/get/"):
                 self.assertEqual(query["dimensions"], ['["item_id"]'])
@@ -136,14 +137,14 @@ class CreativeReportExportTests(unittest.TestCase):
                         "gross_revenue": 50,
                         "product_impressions": 100,
                         "product_clicks": 10,
-                        "product_click_rate": 0.1,
-                        "ad_conversion_rate": 0.2,
-                        "ad_video_view_rate_2s": 0.9,
-                        "ad_video_view_rate_6s": 0.8,
-                        "ad_video_view_rate_p25": 0.7,
-                        "ad_video_view_rate_p50": 0.6,
-                        "ad_video_view_rate_p75": 0.5,
-                        "ad_video_view_rate_p100": 0.4,
+                        "product_click_rate": 10,
+                        "ad_conversion_rate": 20,
+                        "ad_video_view_rate_2s": 90,
+                        "ad_video_view_rate_6s": 80,
+                        "ad_video_view_rate_p25": 70,
+                        "ad_video_view_rate_p50": 60,
+                        "ad_video_view_rate_p75": 50,
+                        "ad_video_view_rate_p100": 40,
                     },
                 }
             ],
@@ -175,6 +176,7 @@ class CreativeReportExportTests(unittest.TestCase):
         self.assertEqual(rows[0]["广告计划名称"], "GMV Max Plan")
         self.assertEqual(rows[0]["成本"], 12.5)
         self.assertEqual(rows[0]["商品广告点击率"], 0.1)
+        self.assertEqual(rows[0]["广告转化率"], 0.2)
         self.assertEqual(rows[0]["广告视频完播率"], 0.4)
 
     def test_build_creative_rows_leaves_product_name_blank_without_product_access(self):

@@ -63,6 +63,15 @@ def resolve_date_range(
     return complete_natural_date_range(reference_date)
 
 
+def safe_failure_detail(error: Exception) -> str:
+    """Expose only endpoint-level errors that cannot contain credentials or identifiers."""
+
+    message = str(error)
+    if message.startswith("TikTok API request failed for /open_api/"):
+        return message
+    return type(error).__name__
+
+
 def main() -> None:
     app_id = _required_environment("TIKTOK_APP_ID")
     app_secret = _required_environment("TIKTOK_APP_SECRET")
@@ -76,19 +85,26 @@ def main() -> None:
     def on_access_token(access_token: str) -> None:
         with tempfile.TemporaryDirectory(prefix="tiktok-creative-report-") as directory:
             payload_path = Path(directory) / "creative-report.json"
-            run_export(
-                access_token=access_token,
-                advertiser_id=advertiser_id,
-                payload_path=payload_path,
-                start_date=start_date,
-                end_date=end_date,
-            )
-            build_workbook_atomically(
-                node_command=node_command,
-                builder_path=BUILDER_PATH,
-                payload_path=payload_path,
-                output_path=output_path,
-            )
+            try:
+                print("阶段：正在拉取 TikTok 创意明细。", flush=True)
+                run_export(
+                    access_token=access_token,
+                    advertiser_id=advertiser_id,
+                    payload_path=payload_path,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                print("阶段：TikTok 数据拉取完成，正在生成 XLSX。", flush=True)
+                build_workbook_atomically(
+                    node_command=node_command,
+                    builder_path=BUILDER_PATH,
+                    payload_path=payload_path,
+                    output_path=output_path,
+                )
+                print("阶段：XLSX 已原子替换完成。", flush=True)
+            except Exception as error:
+                print(f"阶段：导出失败，原因：{safe_failure_detail(error)}", flush=True)
+                raise
 
     server = create_local_server(app_id=app_id, app_secret=app_secret, on_access_token=on_access_token)
     print("在浏览器打开：http://127.0.0.1:3000/api/oauth/tiktok/start", flush=True)

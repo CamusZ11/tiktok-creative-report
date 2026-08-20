@@ -4,10 +4,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from start_oauth_export import build_workbook_atomically, resolve_date_range
+from start_oauth_export import build_workbook_atomically, resolve_date_range, safe_failure_detail
 
 
 class StartOAuthExportTests(unittest.TestCase):
+    def test_safe_failure_detail_only_keeps_known_safe_tiktok_api_messages(self):
+        self.assertEqual(
+            safe_failure_detail(RuntimeError("TikTok API request failed for /open_api/v1.3/gmv_max/report/get/")),
+            "TikTok API request failed for /open_api/v1.3/gmv_max/report/get/",
+        )
+        self.assertEqual(safe_failure_detail(ValueError("secret-like detail")), "ValueError")
+
     def test_resolve_date_range_defaults_to_last_seven_complete_days(self):
         self.assertEqual(
             resolve_date_range({}, reference_date="2026-08-20"),

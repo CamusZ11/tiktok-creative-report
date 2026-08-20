@@ -249,7 +249,7 @@ def download_creative_report(
                     "store_id": store_id,
                     "store_authorized_bc_id": bc_id,
                     "need_auth_code_video": True,
-                    "page_size": 100,
+                    "page_size": 50,
                 },
             )
         )
@@ -303,6 +303,17 @@ def download_creative_report(
 
 def _text(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _percentage_as_ratio(value: Any) -> Any:
+    """Convert TikTok's percentage-point report metrics to Excel ratio values."""
+
+    if value in (None, ""):
+        return ""
+    try:
+        return float(value) / 100
+    except (TypeError, ValueError):
+        return value
 
 
 def complete_natural_date_range(reference_date: str | date | None = None) -> tuple[str, str]:
@@ -434,14 +445,14 @@ def build_creative_rows(
             "总收入": metrics.get("gross_revenue", ""),
             "商品广告曝光数": metrics.get("product_impressions", ""),
             "商品广告点击数": metrics.get("product_clicks", ""),
-            "商品广告点击率": metrics.get("product_click_rate", ""),
-            "广告转化率": metrics.get("ad_conversion_rate", ""),
-            "广告视频播放达 2 秒播放率": metrics.get("ad_video_view_rate_2s", ""),
-            "广告视频播放达 6 秒播放率": metrics.get("ad_video_view_rate_6s", ""),
-            "广告视频播放达 25% 播放率": metrics.get("ad_video_view_rate_p25", ""),
-            "广告视频播放达 50% 播放率": metrics.get("ad_video_view_rate_p50", ""),
-            "广告视频播放达 75% 播放率": metrics.get("ad_video_view_rate_p75", ""),
-            "广告视频完播率": metrics.get("ad_video_view_rate_p100", ""),
+            "商品广告点击率": _percentage_as_ratio(metrics.get("product_click_rate", "")),
+            "广告转化率": _percentage_as_ratio(metrics.get("ad_conversion_rate", "")),
+            "广告视频播放达 2 秒播放率": _percentage_as_ratio(metrics.get("ad_video_view_rate_2s", "")),
+            "广告视频播放达 6 秒播放率": _percentage_as_ratio(metrics.get("ad_video_view_rate_6s", "")),
+            "广告视频播放达 25% 播放率": _percentage_as_ratio(metrics.get("ad_video_view_rate_p25", "")),
+            "广告视频播放达 50% 播放率": _percentage_as_ratio(metrics.get("ad_video_view_rate_p50", "")),
+            "广告视频播放达 75% 播放率": _percentage_as_ratio(metrics.get("ad_video_view_rate_p75", "")),
+            "广告视频完播率": _percentage_as_ratio(metrics.get("ad_video_view_rate_p100", "")),
         }
         result.append({header: row[header] for header in CREATIVE_HEADERS})
     return result
