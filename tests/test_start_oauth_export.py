@@ -43,6 +43,7 @@ class StartOAuthExportTests(unittest.TestCase):
             self.assertNotIn("TIKTOK_APP_SECRET", env)
             self.assertNotIn("TIKTOK_ACCESS_TOKEN", env)
             Path(command[-1]).write_bytes(b"new-workbook")
+            Path(f"{command[-1]}.inspect.ndjson").write_text("temporary inspection", encoding="utf-8")
 
         with (
             patch.dict(
@@ -61,6 +62,7 @@ class StartOAuthExportTests(unittest.TestCase):
 
         self.assertEqual(target.read_bytes(), b"new-workbook")
         self.assertFalse(list(target.parent.glob(".*.tmp.xlsx")))
+        self.assertFalse(list(target.parent.glob(".*.tmp.xlsx.inspect.ndjson")))
 
     def test_build_workbook_atomically_preserves_previous_target_on_builder_failure(self):
         directory = Path(tempfile.mkdtemp())
@@ -69,7 +71,11 @@ class StartOAuthExportTests(unittest.TestCase):
         target = directory / "TikTok_创意明细.xlsx"
         target.write_bytes(b"previous-workbook")
 
-        with patch("start_oauth_export.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["node"])):
+        def failed_builder(command, check, env):
+            Path(f"{command[-1]}.inspect.ndjson").write_text("temporary inspection", encoding="utf-8")
+            raise subprocess.CalledProcessError(1, ["node"])
+
+        with patch("start_oauth_export.subprocess.run", side_effect=failed_builder):
             with self.assertRaises(subprocess.CalledProcessError):
                 build_workbook_atomically(
                     node_command="node",
@@ -79,6 +85,7 @@ class StartOAuthExportTests(unittest.TestCase):
                 )
 
         self.assertEqual(target.read_bytes(), b"previous-workbook")
+        self.assertFalse(list(target.parent.glob(".*.tmp.xlsx.inspect.ndjson")))
 
     def test_build_workbook_atomically_refuses_excel_locked_target(self):
         directory = Path(tempfile.mkdtemp())

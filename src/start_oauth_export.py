@@ -33,6 +33,7 @@ def build_workbook_atomically(
     if excel_lock_path.exists():
         raise RuntimeError("目标 XLSX 正在被 Excel 占用，请关闭工作簿后重试")
     temporary_path = output_path.with_name(f".{output_path.stem}-{uuid4().hex}.tmp.xlsx")
+    inspection_sidecar_path = Path(f"{temporary_path}.inspect.ndjson")
     try:
         builder_environment = dict(os.environ)
         for name in ("TIKTOK_APP_SECRET", "TIKTOK_ACCESS_TOKEN"):
@@ -56,6 +57,7 @@ def build_workbook_atomically(
         os.replace(temporary_path, output_path)
     finally:
         temporary_path.unlink(missing_ok=True)
+        inspection_sidecar_path.unlink(missing_ok=True)
     return output_path
 
 
